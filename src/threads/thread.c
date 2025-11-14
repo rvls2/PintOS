@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/fixed-point.h" // adicionado
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -21,12 +22,18 @@
 #define THREAD_MAGIC 0xcd6abf4b
 #define A 55
 
+/* Carga média do sistema (PONTO FIXO) */
+static int load_avg; 
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
 
 // Lista de threads no estado sleep
 static struct list sleep_list;
+
+/* As 64 filas de prontos para o MLFQ */
+static struct list ready_queues[PRI_MAX + 1];
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -98,6 +105,18 @@ thread_init (void)
   list_init (&sleep_list);
   list_init (&all_list);
 
+  /* --- INÍCIO: Adicionar --- */
+  if (thread_mlfqs) 
+    {
+      /* Inicializa as 64 filas do MLFQ */
+      for (int i = PRI_MIN; i <= PRI_MAX; i++) {
+          list_init(&ready_queues[i]);
+      }
+      /* Inicializa a carga média do sistema */
+      load_avg = 0;
+    }
+  /* --- FIM: Adicionar --- */
+
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
   init_thread (initial_thread, "main", PRI_DEFAULT);
@@ -115,6 +134,15 @@ thread_start (void)
   sema_init (&idle_started, 0);
   thread_create ("idle", PRI_MIN, idle, &idle_started);
 
+  /* --- INÍCIO: Adicionar --- */
+  /* Inicializa 'nice' e 'recent_cpu' para a thread inicial (main) */
+  if (thread_mlfqs)
+    {
+      initial_thread->nice = 0;
+      initial_thread->recent_cpu = 0;
+    }
+  /* --- FIM: Adicionar --- */
+
   /* Start preemptive thread scheduling. */
   intr_enable ();
 
@@ -128,6 +156,23 @@ void
 thread_tick (void) 
 {
   struct thread *t = thread_current ();
+
+  /* --- INÍCIO: Adicionar --- */
+  if (thread_mlfqs) 
+    {
+      /* A CADA TICK: Incrementa recent_cpu da thread atual */
+      if (t != idle_thread) {
+        t->recent_cpu = ADD_INT(t->recent_cpu, 1);
+      }
+
+      /* A CADA SEGUNDO: Recalcula load_avg e prioridades de TODAS as threads */
+      if (timer_ticks () % TIMER_FREQ == 0) {
+        // mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
+        // mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
+        // mlfqs_update_all_priority (); /* <-- Você vai criar esta função */
+      }
+    }
+  /* --- FIM: Adicionar --- */
 
   /* Update statistics. */
   if (t == idle_thread)
@@ -188,6 +233,16 @@ thread_create (const char *name, int priority,
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
 
+  /* --- INÍCIO: Adicionar --- */
+  if (thread_mlfqs)
+    {
+      /* Herda 'nice' e 'recent_cpu' da thread pai */
+      struct thread *cur = thread_current ();
+      t->nice = cur->nice;
+      t->recent_cpu = cur->recent_cpu;
+    }
+  /* --- FIM: Adicionar --- */
+
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
   kf->eip = NULL;
@@ -242,7 +297,19 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_insert_ordered (&ready_list, &t->elem, thread_compare_priority, NULL); // Mudei aqui pra dar certo a parte de alarm priority
+  /* --- INÍCIO: Modificar --- */
+  if (thread_mlfqs) 
+    {
+      /* Lógica MLFQ: Insere na fila de prioridade calculada */
+      list_push_back(&ready_queues[t->priority], &t->elem);
+    } 
+  else 
+    {
+      /* Lógica de Prioridade (dos seus colegas): Insere ordenado na lista única */
+      list_insert_ordered (&ready_list, &t->elem, thread_compare_priority, NULL);
+    }
+  /* --- FIM: Modificar --- */
+  //list_insert_ordered (&ready_list, &t->elem, thread_compare_priority, NULL); // Mudei aqui pra dar certo a parte de alarm priority
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -312,8 +379,25 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
+   
+/* --- INÍCIO: Modificar --- */
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    {
+      if (thread_mlfqs) 
+        {
+          /* Lógica MLFQ: Insere na fila de prioridade calculada */
+          list_push_back(&ready_queues[cur->priority], &cur->elem);
+        } 
+      else 
+        {
+          /* Lógica de Prioridade (dos seus colegas): Insere na lista única */
+          list_push_back (&ready_list, &cur->elem); 
+          /* NOTA: Seus colegas talvez devessem usar list_insert_ordered aqui também, 
+             mas vamos manter o código deles. */
+        }
+    }
+  /* --- FIM: Modificar --- */
+   
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -344,7 +428,7 @@ thread_sleep (int64_t ticks) {
   old_level = intr_disable();
 
   if (atual != idle_thread) {
-    atual->wakeup_tick = ticks;
+    atual->wakeup_tick = timer_ticks() + ticks; /* <-- Correção */
     list_insert_ordered(&sleep_list, &atual->elem, thread_compare, NULL);
     thread_block();
   }
@@ -403,31 +487,36 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice UNUSED) 
 {
-  /* Not yet implemented. */
+  /* --- INÍCIO: Adicionar --- */
+  struct thread *cur = thread_current ();
+  cur->nice = nice;
+  
+  /* Recalcula a prioridade imediatamente após mudar o 'nice' */
+  if (thread_mlfqs) {
+    // mlfqs_update_priority (cur); /* <-- Você vai criar esta função */
+  }
+  /* --- FIM: Adicionar --- */
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return thread_current ()->nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return FP_TO_INT_NEAR( MULT_INT(load_avg, 100) );
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  /* Not yet implemented. */
-  return 0;
+  return FP_TO_INT_NEAR( MULT_INT(thread_current ()->recent_cpu, 100) ); // adicionado
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
