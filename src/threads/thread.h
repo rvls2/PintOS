@@ -96,6 +96,11 @@ struct thread
     // Alarm Clock
     int64_t wakeup_tick;
 
+    /* --- INÍCIO: Adição para o MLFQ --- */
+    int nice;           /* Valor 'nice' (inteiro, -20 a 20) */
+    int recent_cpu;     /* CPU recente (em PONTO FIXO) */
+    /* --- FIM: Adição para o MLFQ --- */
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
