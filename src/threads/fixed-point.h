@@ -1,1 +1,61 @@
+#ifndef THREADS_FIXED_POINT_H
+#define THREADS_FIXED_POINT_H
 
+/* Formato de Ponto Fixo: 17.14 
+   Q = 14 é o número de bits da parte fracionária */
+#define F (1 << 14) // Fator de conversão (2^14 = 16384)
+
+/* * NOTA: Nos comentários abaixo, 'x' e 'y' são números em
+ * ponto fixo, enquanto 'n' é um inteiro padrão.
+ */
+
+// 1. --- CONVERSÕES ---
+
+/* Converte o inteiro 'n' para ponto fixo */
+#define INT_TO_FP(n) ((n) * F)
+
+/* Converte o ponto fixo 'x' para inteiro (Truncando/Floor)
+ * (Isso arredonda para baixo, em direção a zero) */
+#define FP_TO_INT_ZERO(x) ((x) / F)
+
+/* Converte o ponto fixo 'x' para inteiro (Arredondando)
+ * (Arredonda para o inteiro mais próximo) */
+#define FP_TO_INT_NEAR(x) ((x) >= 0 ? ((x) + F / 2) / F : ((x) - F / 2) / F)
+
+
+// 2. --- ADIÇÃO E SUBTRAÇÃO ---
+
+/* Adiciona dois números de ponto fixo (x + y) */
+#define ADD_FP(x, y) ((x) + (y))
+
+/* Subtrai dois números de ponto fixo (x - y) */
+#define SUB_FP(x, y) ((x) - (y))
+
+/* Adiciona um ponto fixo 'x' e um inteiro 'n' */
+#define ADD_INT(x, n) ((x) + (n) * F)
+
+/* Subtrai um inteiro 'n' de um ponto fixo 'x' */
+#define SUB_INT(x, n) ((x) - (n) * F)
+
+
+// 3. --- MULTIPLICAÇÃO E DIVISÃO (As partes críticas!) ---
+
+/* Multiplica dois números de ponto fixo (x * y)
+ * IMPORTANTE: Usamos 'int64_t' para evitar overflow 
+ * durante o cálculo intermediário (x * y), 
+ * antes de dividir por F para normalizar. */
+#define MULT_FP(x, y) ( ((int64_t)(x)) * (y) / F )
+
+/* Multiplica um ponto fixo 'x' por um inteiro 'n' */
+#define MULT_INT(x, n) ((x) * (n))
+
+/* Divide dois números de ponto fixo (x / y)
+ * IMPORTANTE: Usamos 'int64_t' para evitar overflow
+ * durante o cálculo intermediário (x * F),
+ * antes de dividir por y. */
+#define DIV_FP(x, y) ( ((int64_t)(x)) * F / (y) )
+
+/* Divide um ponto fixo 'x' por um inteiro 'n' */
+#define DIV_INT(x, n) ((x) / (n))
+
+#endif /* threads/fixed-point.h */
