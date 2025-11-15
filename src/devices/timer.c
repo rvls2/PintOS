@@ -176,6 +176,9 @@ timer_interrupt (struct intr_frame *args UNUSED)
 
   // Adicionado
   thread_wakeup(timer_ticks());
+
+  // mlfqs
+  if (thread_mlfqs) thread_mlfqs_(timer_ticks());
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
