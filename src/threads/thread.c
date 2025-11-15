@@ -24,6 +24,8 @@
 
 /* Carga média do sistema (PONTO FIXO) */
 static int load_avg; 
+static int f_59_60; /* Constante (59/60) em ponto fixo */
+static int f_1_60;  /* Constante (1/60) em ponto fixo */
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
@@ -114,6 +116,11 @@ thread_init (void)
       }
       /* Inicializa a carga média do sistema */
       load_avg = 0;
+
+      /* --- INÍCIO: Adicionar Inicialização das Constantes --- */
+      f_59_60 = DIV_FP(INT_TO_FP(59), INT_TO_FP(60));
+      f_1_60 = DIV_FP(INT_TO_FP(1), INT_TO_FP(60));
+      /* --- FIM: Adicionar --- */
     }
   /* --- FIM: Adicionar --- */
 
@@ -167,9 +174,9 @@ thread_tick (void)
 
       /* A CADA SEGUNDO: Recalcula load_avg e prioridades de TODAS as threads */
       if (timer_ticks () % TIMER_FREQ == 0) {
-        // mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
-        // mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
-        // mlfqs_update_all_priority (); /* <-- Você vai criar esta função */
+        mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
+        mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
+        mlfqs_update_all_priority (); /* <-- Você vai criar esta função */
       }
     }
   /* --- FIM: Adicionar --- */
@@ -493,7 +500,7 @@ thread_set_nice (int nice UNUSED)
   
   /* Recalcula a prioridade imediatamente após mudar o 'nice' */
   if (thread_mlfqs) {
-    // mlfqs_update_priority (cur); /* <-- Você vai criar esta função */
+    mlfqs_update_one_priority (cur, NULL); /* <-- Você vai criar esta função */
   }
   /* --- FIM: Adicionar --- */
 }
@@ -634,10 +641,37 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
+  /*if (list_empty (&ready_list))
     return idle_thread;
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    return list_entry (list_pop_front (&ready_list), struct thread, elem);*/
+
+   
+  if (thread_mlfqs) 
+    {
+      /* LÓGICA MLFQ: */
+      /* Varre as 64 filas da prioridade mais alta (63) para a mais baixa (0) */
+      for (int i = PRI_MAX; i >= PRI_MIN; i--) 
+        {
+          if (!list_empty(&ready_queues[i])) 
+            {
+              /* Encontrou uma thread! Retira e a retorna. */
+              struct list_elem *e = list_pop_front(&ready_queues[i]);
+              return list_entry(e, struct thread, elem);
+            }
+        }
+      /* Se todas as 64 filas estiverem vazias, retorna a idle_thread */
+      return idle_thread;
+    } 
+  else 
+    {
+      /* LÓGICA DE PRIORIDADE (dos seus colegas): */
+      /* Pega a próxima thread da 'ready_list' (que está ordenada) */
+      if (list_empty (&ready_list))
+        return idle_thread;
+      else
+        return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -727,6 +761,116 @@ allocate_tid (void)
 
   return tid;
 }
+
+/* Recalcula o load_avg do sistema (chamado a cada segundo). */
+static void
+mlfqs_update_load_avg (void)
+{
+  /* 1. Contar o "tamanho-da-ready-list" (ready_threads) */
+  int ready_threads = 0;
+  
+  /* Itera por todas as 64 filas de prioridade e soma o tamanho */
+  for (int i = PRI_MIN; i <= PRI_MAX; i++) {
+    ready_threads += list_size(&ready_queues[i]);
+  }
+  
+  /* Adiciona a thread que está RUNNING (se não for a idle) */
+  if (thread_current () != idle_thread) {
+    ready_threads++;
+  }
+
+  /* 2. Aplicar a fórmula:
+     load_avg = (59/60) * load_avg + (1/60) * ready_threads */
+  
+  /* 'load_avg' é (Ponto Fixo * Ponto Fixo) */
+  int part1 = MULT_FP(f_59_60, load_avg);
+  
+  /* 'ready_threads' é (Ponto Fixo * Inteiro) */
+  int part2 = MULT_INT(f_1_60, ready_threads);
+  
+  /* load_avg = (Ponto Fixo + Ponto Fixo) */
+  load_avg = ADD_FP(part1, part2);
+}
+
+/* Aplica a fórmula de recent_cpu em UMA thread.
+   Esta é uma função auxiliar para thread_foreach. */
+static void
+mlfqs_update_one_recent_cpu (struct thread *t, void *aux UNUSED)
+{
+  /* 1. Calcular o coeficiente: (2 * load_avg) / (2 * load_avg + 1) */
+
+  /* (2 * load_avg) - Ponto Fixo */
+  int f_2_load_avg = MULT_INT(load_avg, 2);
+  
+  /* (2 * load_avg + 1) - Ponto Fixo */
+  int f_2_load_avg_p1 = ADD_INT(f_2_load_avg, 1);
+  
+  /* (Ponto Fixo / Ponto Fixo) */
+  int coeff = DIV_FP(f_2_load_avg, f_2_load_avg_p1);
+
+  /* 2. Aplicar a fórmula:
+     recent_cpu = (coeff * recent_cpu) + nice */
+  
+  /* (coeff * recent_cpu) - Ponto Fixo */
+  int term1 = MULT_FP(coeff, t->recent_cpu);
+  
+  /* (term1 + nice) - Ponto Fixo + Inteiro */
+  t->recent_cpu = ADD_INT(term1, t->nice);
+}
+
+/* Recalcula o recent_cpu de TODAS as threads (chamado a cada segundo). */
+static void
+mlfqs_update_all_recent_cpu (void)
+{
+  /* Usa thread_foreach para aplicar a função 'mlfqs_update_one_recent_cpu'
+     em todas as threads da 'all_list'. */
+  thread_foreach(mlfqs_update_one_recent_cpu, NULL);
+}
+
+/* Aplica a fórmula de prioridade em UMA thread.
+   Esta é uma função auxiliar para thread_foreach. */
+static void
+mlfqs_update_one_priority (struct thread *t, void *aux UNUSED)
+{
+  /* A prioridade da idle_thread não importa */
+  if (t == idle_thread) {
+    return;
+  }
+
+  /* 1. Calcular o primeiro termo: floor(RecentCpuTime / 4) 
+     (Nota: 'recent_cpu' é ponto fixo, '4' é inteiro) */
+  int recent_cpu_div_4_fp = DIV_INT(t->recent_cpu, 4);
+  
+  /* Usamos FP_TO_INT_ZERO para fazer o 'floor()' (truncar) */
+  int term1 = FP_TO_INT_ZERO(recent_cpu_div_4_fp);
+
+  /* 2. Calcular o segundo termo: (nice * 2) 
+     (Nota: 'nice' é inteiro, '2' é inteiro) */
+  int term2 = t->nice * 2;
+
+  /* 3. Aplicar a fórmula: p = PriMax - term1 - term2 */
+  int new_priority = PRI_MAX - term1 - term2;
+
+  /* 4. Garantir (clampar) que a prioridade fique entre 0 e 63 */
+  if (new_priority > PRI_MAX) {
+    new_priority = PRI_MAX;
+  } else if (new_priority < PRI_MIN) {
+    new_priority = PRI_MIN;
+  }
+  
+  /* 5. Definir a nova prioridade da thread */
+  t->priority = new_priority;
+}
+
+/* Recalcula a prioridade de TODAS as threads (chamado a cada segundo). */
+static void
+mlfqs_update_all_priority (void)
+{
+  /* Usa thread_foreach para aplicar a função 'mlfqs_update_one_priority'
+     em todas as threads da 'all_list'. */
+  thread_foreach(mlfqs_update_one_priority, NULL);
+}
+
 
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
