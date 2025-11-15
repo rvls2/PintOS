@@ -12,6 +12,7 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "threads/fixed-point.h" // adicionado
+#include "devices/timer.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -23,7 +24,7 @@
 #define A 55
 
 /* Carga média do sistema (PONTO FIXO) */
-static int load_avg; 
+static int load_avg;
 static int f_59_60; /* Constante (59/60) em ponto fixo */
 static int f_1_60;  /* Constante (1/60) em ponto fixo */
 
@@ -115,7 +116,7 @@ thread_init (void)
           list_init(&ready_queues[i]);
       }
       /* Inicializa a carga média do sistema */
-      load_avg = 0;
+      load_avg = INT_TO_FP(0);
 
       /* --- INÍCIO: Adicionar Inicialização das Constantes --- */
       f_59_60 = DIV_FP(INT_TO_FP(59), INT_TO_FP(60));
@@ -146,7 +147,7 @@ thread_start (void)
   if (thread_mlfqs)
     {
       initial_thread->nice = 0;
-      initial_thread->recent_cpu = 0;
+      initial_thread->recent_cpu = INT_TO_FP(0);
     }
   /* --- FIM: Adicionar --- */
 
@@ -164,23 +165,6 @@ thread_tick (void)
 {
   struct thread *t = thread_current ();
 
-  /* --- INÍCIO: Adicionar --- */
-  if (thread_mlfqs) 
-    {
-      /* A CADA TICK: Incrementa recent_cpu da thread atual */
-      if (t != idle_thread) {
-        t->recent_cpu = ADD_INT(t->recent_cpu, 1);
-      }
-
-      /* A CADA SEGUNDO: Recalcula load_avg e prioridades de TODAS as threads */
-      if (timer_ticks () % TIMER_FREQ == 0) {
-        mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
-        mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
-        mlfqs_update_all_priority (); /* <-- Você vai criar esta função */
-      }
-    }
-  /* --- FIM: Adicionar --- */
-
   /* Update statistics. */
   if (t == idle_thread)
     idle_ticks++;
@@ -194,6 +178,26 @@ thread_tick (void)
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
+}
+
+void
+thread_mlfqs_(int64_t tick) {
+  struct thread *t = thread_current ();
+
+  /* --- INÍCIO: Adicionar --- */
+
+  /* A CADA TICK: Incrementa recent_cpu da thread atual */
+  if (t != idle_thread) {
+    t->recent_cpu = ADD_INT(t->recent_cpu, 1);
+  }
+
+  /* A CADA SEGUNDO: Recalcula load_avg e prioridades de TODAS as threads */
+  if (tick % TIMER_FREQ == 0) {
+    mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
+    mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
+    mlfqs_update_all_priority (); /* <-- Você vai criar esta função */
+  }
+  /* --- FIM: Adicionar --- */
 }
 
 /* Prints thread statistics. */
@@ -435,7 +439,7 @@ thread_sleep (int64_t ticks) {
   old_level = intr_disable();
 
   if (atual != idle_thread) {
-    atual->wakeup_tick = timer_ticks() + ticks; /* <-- Correção */
+    atual->wakeup_tick = ticks; // Não muda isso aqui, a IA está errada
     list_insert_ordered(&sleep_list, &atual->elem, thread_compare, NULL);
     thread_block();
   }
@@ -614,6 +618,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   t->wakeup_tick = 0;
+  t->nice = 0;
+  t->recent_cpu = INT_TO_FP(0);
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -858,18 +864,26 @@ mlfqs_update_one_priority (struct thread *t, void *aux UNUSED)
     new_priority = PRI_MIN;
   }
   
-  /* 5. Definir a nova prioridade da thread */
-  t->priority = new_priority;
+  // Atualiza ready_queue com new priority
+  if (t->status == THREAD_READY) {
+    if (t->elem.prev != NULL && t->elem.next != NULL) list_remove(&t->elem);
+    t->priority = new_priority;
+    list_push_back(&ready_queues[new_priority], &t->elem);
+  } else {
+    // Caso improvável: não estava na fila
+    t->priority = new_priority;
+  }
 }
 
 /* Recalcula a prioridade de TODAS as threads (chamado a cada segundo). */
 static void
 mlfqs_update_all_priority (void)
 {
-  /* Usa thread_foreach para aplicar a função 'mlfqs_update_one_priority'
-     em todas as threads da 'all_list'. */
+  /*Uda thread_foreach para aplicar a função 'mlfqs_update_one_priority'
+    em todas as threads da 'all_list'. */
   thread_foreach(mlfqs_update_one_priority, NULL);
 }
+
 
 
 /* Offset of `stack' member within `struct thread'.
