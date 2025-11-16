@@ -195,8 +195,14 @@ thread_mlfqs_(int64_t tick) {
   if (tick % TIMER_FREQ == 0) {
     mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
     mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
-    mlfqs_update_all_priority (); /* <-- Você vai criar esta função */
   }
+  if (tick % 4 == 0) {
+    mlfqs_update_all_priority();
+  }
+
+  int highest = mlfqs_highest_priority();
+
+  if (highest > t->priority) intr_yield_on_return();
   /* --- FIM: Adicionar --- */
 }
 
@@ -241,7 +247,9 @@ thread_create (const char *name, int priority,
     return TID_ERROR;
 
   /* Initialize thread. */
-  init_thread (t, name, priority);
+  if (thread_mlfqs) init_thread(t, name, PRI_MAX);
+  else init_thread (t, name, priority);
+
   tid = t->tid = allocate_tid ();
 
   /* --- INÍCIO: Adicionar --- */
@@ -271,6 +279,8 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+
+  if (t->priority > thread_current()->priority) thread_yield();
 
   return tid;
 }
@@ -312,6 +322,8 @@ thread_unblock (struct thread *t)
   if (thread_mlfqs) 
     {
       /* Lógica MLFQ: Insere na fila de prioridade calculada */
+      mlfqs_update_one_priority(t, NULL);
+      ASSERT (t->priority >= PRI_MIN && t->priority <= PRI_MAX);
       list_push_back(&ready_queues[t->priority], &t->elem);
     } 
   else 
@@ -402,7 +414,7 @@ thread_yield (void)
       else 
         {
           /* Lógica de Prioridade (dos seus colegas): Insere na lista única */
-          list_push_back (&ready_list, &cur->elem); 
+          list_insert_ordered(&ready_list, &cur->elem, thread_compare_priority, NULL);
           /* NOTA: Seus colegas talvez devessem usar list_insert_ordered aqui também, 
              mas vamos manter o código deles. */
         }
@@ -484,7 +496,29 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  /* No MLFQS, prioridade é calculada automaticamente. */
+  if (thread_mlfqs)
+    return;
+
+  struct thread *cur = thread_current ();
+  cur->priority = new_priority;
+
+  /* Se nenhuma thread estiver pronta, nada a fazer. */
+  bool ready_empty = true;
+
+  /* Check if ANY ready queue (from highest to lowest) has a thread */
+  for (int p = PRI_MAX; p >= PRI_MIN; p--) {
+    if (!list_empty(&ready_queues[p])) {
+      ready_empty = false;
+
+      /* Se existe alguma thread com prioridade maior que a atual → yield */
+      if (p > cur->priority) {
+        thread_yield();
+      }
+
+      break; /* Já achou a fila mais alta não vazia, pode parar */
+    }
+  }
 }
 
 /* Returns the current thread's priority. */
@@ -864,15 +898,19 @@ mlfqs_update_one_priority (struct thread *t, void *aux UNUSED)
     new_priority = PRI_MIN;
   }
   
-  // Atualiza ready_queue com new priority
-  if (t->status == THREAD_READY) {
-    if (t->elem.prev != NULL && t->elem.next != NULL) list_remove(&t->elem);
-    t->priority = new_priority;
-    list_push_back(&ready_queues[new_priority], &t->elem);
-  } else {
-    // Caso improvável: não estava na fila
-    t->priority = new_priority;
-  }
+  int old_priority = t->priority;
+  if (new_priority == old_priority)
+    return;
+
+  enum intr_level old_level = intr_disable ();
+
+  if (t->status == THREAD_READY)
+    list_remove (&t->elem);
+  t->priority = new_priority;
+  if (t->status == THREAD_READY)
+    list_push_back (&ready_queues[new_priority], &t->elem);
+  
+  intr_set_level (old_level);
 }
 
 /* Recalcula a prioridade de TODAS as threads (chamado a cada segundo). */
@@ -882,6 +920,15 @@ mlfqs_update_all_priority (void)
   /*Uda thread_foreach para aplicar a função 'mlfqs_update_one_priority'
     em todas as threads da 'all_list'. */
   thread_foreach(mlfqs_update_one_priority, NULL);
+}
+
+int mlfqs_highest_priority(void)
+{
+    for (int p = PRI_MAX; p >= PRI_MIN; p--)
+        if (!list_empty(&ready_queues[p]))
+            return p;
+
+    return PRI_MIN;
 }
 
 
