@@ -156,5 +156,6 @@ static void mlfqs_update_one_recent_cpu (struct thread *t, void *aux UNUSED);
 static void mlfqs_update_all_recent_cpu (void);
 static void mlfqs_update_one_priority (struct thread *t, void *aux UNUSED);
 static void mlfqs_update_all_priority (void);
+int mlfqs_highest_priority(void);
 
 #endif /* threads/thread.h */
