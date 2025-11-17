@@ -869,48 +869,39 @@ mlfqs_update_all_recent_cpu (void)
 
 /* Aplica a fórmula de prioridade em UMA thread.
    Esta é uma função auxiliar para thread_foreach. */
+
 static void
 mlfqs_update_one_priority (struct thread *t, void *aux UNUSED)
 {
-  /* A prioridade da idle_thread não importa */
-  if (t == idle_thread) {
-    return;
-  }
+  /* A prioridade da idle_thread não importa */
+  if (t == idle_thread) {
+    return;
+  }
 
-  /* 1. Calcular o primeiro termo: floor(RecentCpuTime / 4) 
-     (Nota: 'recent_cpu' é ponto fixo, '4' é inteiro) */
-  int recent_cpu_div_4_fp = DIV_INT(t->recent_cpu, 4);
-  
-  /* Usamos FP_TO_INT_ZERO para fazer o 'floor()' (truncar) */
-  int term1 = FP_TO_INT_ZERO(recent_cpu_div_4_fp);
+  /* 1. Calcular o primeiro termo: floor(RecentCpuTime / 4) */
+  int recent_cpu_div_4_fp = DIV_INT(t->recent_cpu, 4);
+  int term1 = FP_TO_INT_ZERO(recent_cpu_div_4_fp);
 
-  /* 2. Calcular o segundo termo: (nice * 2) 
-     (Nota: 'nice' é inteiro, '2' é inteiro) */
-  int term2 = t->nice * 2;
+  /* 2. Calcular o segundo termo: (nice * 2) */
+  int term2 = t->nice * 2;
 
-  /* 3. Aplicar a fórmula: p = PriMax - term1 - term2 */
-  int new_priority = PRI_MAX - term1 - term2;
+  /* 3. Aplicar a fórmula: p = PriMax - term1 - term2 */
+  int new_priority = PRI_MAX - term1 - term2;
 
-  /* 4. Garantir (clampar) que a prioridade fique entre 0 e 63 */
-  if (new_priority > PRI_MAX) {
-    new_priority = PRI_MAX;
-  } else if (new_priority < PRI_MIN) {
-    new_priority = PRI_MIN;
-  }
-  
-  int old_priority = t->priority;
-  if (new_priority == old_priority)
-    return;
+  /* 4. Garantir (clampar) que a prioridade fique entre 0 e 63 */
+  if (new_priority > PRI_MAX) {
+    new_priority = PRI_MAX;
+  } else if (new_priority < PRI_MIN) {
+    new_priority = PRI_MIN;
+  }
+  
+  int old_priority = t->priority;
+  if (new_priority == old_priority)
+    return;
 
-  enum intr_level old_level = intr_disable ();
-
-  if (t->status == THREAD_READY)
-    list_remove (&t->elem);
-  t->priority = new_priority;
-  if (t->status == THREAD_READY)
-    list_push_back (&ready_queues[new_priority], &t->elem);
-  
-  intr_set_level (old_level);
+  // ➡️ AQUI ESTÁ A ÚNICA AÇÃO PERMITIDA: ATUALIZAR O VALOR.
+  // O gerenciamento da fila de prontos (list_remove/list_push_back) está no chamador.
+  t->priority = new_priority;
 }
 
 /* Recalcula a prioridade de TODAS as threads (chamado a cada segundo). */
