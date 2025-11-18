@@ -184,8 +184,6 @@ void
 thread_mlfqs_(int64_t tick) {
   struct thread *t = thread_current ();
 
-  /* --- INÍCIO: Adicionar --- */
-
   /* A CADA TICK: Incrementa recent_cpu da thread atual */
   if (t != idle_thread) {
     t->recent_cpu = ADD_INT(t->recent_cpu, 1);
@@ -193,17 +191,17 @@ thread_mlfqs_(int64_t tick) {
 
   /* A CADA SEGUNDO: Recalcula load_avg e prioridades de TODAS as threads */
   if (tick % TIMER_FREQ == 0) {
-    mlfqs_update_load_avg ();   /* <-- Você vai criar esta função */
-    mlfqs_update_all_recent_cpu (); /* <-- Você vai criar esta função */
+    mlfqs_update_load_avg ();
+    mlfqs_update_all_recent_cpu ();
+    mlfqs_update_all_priority();
   }
-  if (tick % 4 == 0) {
+  /* A CADA 4 TICKS: Atualiza todas as prioridades */
+  else if (tick % 4 == 0) {
     mlfqs_update_all_priority();
   }
 
-  int highest = mlfqs_highest_priority();
-
-  if (highest > t->priority) intr_yield_on_return();
-  /* --- FIM: Adicionar --- */
+  /* REMOVA completamente a verificação de preempção daqui */
+  /* Deixe a preempção ser tratada apenas pelo timer_tick normal */
 }
 
 /* Prints thread statistics. */
@@ -318,21 +316,24 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  /* --- INÍCIO: Modificar --- */
+  
   if (thread_mlfqs) 
     {
-      /* Lógica MLFQ: Insere na fila de prioridade calculada */
+      /* Garante que a prioridade está atualizada antes de inserir */
       mlfqs_update_one_priority(t, NULL);
-      ASSERT (t->priority >= PRI_MIN && t->priority <= PRI_MAX);
+      
+      /* Remove de qualquer lista anterior (por segurança) */
+      if (t->elem.next != NULL && t->elem.prev != NULL) {
+        list_remove(&t->elem);
+      }
+      
       list_push_back(&ready_queues[t->priority], &t->elem);
     } 
   else 
     {
-      /* Lógica de Prioridade (dos seus colegas): Insere ordenado na lista única */
       list_insert_ordered (&ready_list, &t->elem, thread_compare_priority, NULL);
     }
-  /* --- FIM: Modificar --- */
-  //list_insert_ordered (&ready_list, &t->elem, thread_compare_priority, NULL); // Mudei aqui pra dar certo a parte de alarm priority
+    
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -403,23 +404,18 @@ thread_yield (void)
 
   old_level = intr_disable ();
    
-/* --- INÍCIO: Modificar --- */
   if (cur != idle_thread) 
     {
       if (thread_mlfqs) 
         {
-          /* Lógica MLFQ: Insere na fila de prioridade calculada */
+          /* No MLFQS, apenas insere na fila da prioridade atual */
           list_push_back(&ready_queues[cur->priority], &cur->elem);
         } 
       else 
         {
-          /* Lógica de Prioridade (dos seus colegas): Insere na lista única */
           list_insert_ordered(&ready_list, &cur->elem, thread_compare_priority, NULL);
-          /* NOTA: Seus colegas talvez devessem usar list_insert_ordered aqui também, 
-             mas vamos manter o código deles. */
         }
     }
-  /* --- FIM: Modificar --- */
    
   cur->status = THREAD_READY;
   schedule ();
@@ -654,6 +650,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t->wakeup_tick = 0;
   t->nice = 0;
   t->recent_cpu = INT_TO_FP(0);
+  t->parent = NULL;             /* main não tem pai */
+  list_init (&t->children);     /* lista de filhos */
+  sema_init (&t->wait_sema, 0); /* wait() bloqueia aqui */
+  sema_init (&t->load_sema, 0); /* load do exec() */
+  t->exit_status = 0;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -806,29 +807,19 @@ allocate_tid (void)
 static void
 mlfqs_update_load_avg (void)
 {
-  /* 1. Contar o "tamanho-da-ready-list" (ready_threads) */
   int ready_threads = 0;
   
-  /* Itera por todas as 64 filas de prioridade e soma o tamanho */
   for (int i = PRI_MIN; i <= PRI_MAX; i++) {
     ready_threads += list_size(&ready_queues[i]);
   }
   
-  /* Adiciona a thread que está RUNNING (se não for a idle) */
   if (thread_current () != idle_thread) {
     ready_threads++;
   }
 
-  /* 2. Aplicar a fórmula:
-     load_avg = (59/60) * load_avg + (1/60) * ready_threads */
-  
-  /* 'load_avg' é (Ponto Fixo * Ponto Fixo) */
   int part1 = MULT_FP(f_59_60, load_avg);
-  
-  /* 'ready_threads' é (Ponto Fixo * Inteiro) */
   int part2 = MULT_INT(f_1_60, ready_threads);
-  
-  /* load_avg = (Ponto Fixo + Ponto Fixo) */
+  load_avg = ADD_FP(part1, part2);
   load_avg = ADD_FP(part1, part2);
 }
 
@@ -873,35 +864,42 @@ mlfqs_update_all_recent_cpu (void)
 static void
 mlfqs_update_one_priority (struct thread *t, void *aux UNUSED)
 {
-  /* A prioridade da idle_thread não importa */
-  if (t == idle_thread) {
-    return;
-  }
+  if (t == idle_thread) {
+    return;
+  }
 
-  /* 1. Calcular o primeiro termo: floor(RecentCpuTime / 4) */
-  int recent_cpu_div_4_fp = DIV_INT(t->recent_cpu, 4);
-  int term1 = FP_TO_INT_ZERO(recent_cpu_div_4_fp);
+  /* Calcular nova prioridade */
+  int recent_cpu_div_4_fp = DIV_INT(t->recent_cpu, 4);
+  int term1 = FP_TO_INT_ZERO(recent_cpu_div_4_fp);
+  int term2 = t->nice * 2;
+  int new_priority = PRI_MAX - term1 - term2;
 
-  /* 2. Calcular o segundo termo: (nice * 2) */
-  int term2 = t->nice * 2;
-
-  /* 3. Aplicar a fórmula: p = PriMax - term1 - term2 */
-  int new_priority = PRI_MAX - term1 - term2;
-
-  /* 4. Garantir (clampar) que a prioridade fique entre 0 e 63 */
-  if (new_priority > PRI_MAX) {
-    new_priority = PRI_MAX;
-  } else if (new_priority < PRI_MIN) {
-    new_priority = PRI_MIN;
-  }
-  
-  int old_priority = t->priority;
-  if (new_priority == old_priority)
-    return;
-
-  // ➡️ AQUI ESTÁ A ÚNICA AÇÃO PERMITIDA: ATUALIZAR O VALOR.
-  // O gerenciamento da fila de prontos (list_remove/list_push_back) está no chamador.
-  t->priority = new_priority;
+  /* Garantir que a prioridade fique entre 0 e 63 */
+  if (new_priority > PRI_MAX) {
+    new_priority = PRI_MAX;
+  } else if (new_priority < PRI_MIN) {
+    new_priority = PRI_MIN;
+  }
+  
+  /* Se a prioridade mudou e a thread está ready, mover para a fila correta */
+  if (new_priority != t->priority) {
+    enum intr_level old_level = intr_disable ();
+    
+    if (t->status == THREAD_READY) {
+      /* Remove da lista atual */
+      if (t->elem.next != NULL && t->elem.prev != NULL) {
+        list_remove(&t->elem);
+      }
+      /* Atualiza prioridade e reinsere */
+      t->priority = new_priority;
+      list_push_back(&ready_queues[new_priority], &t->elem);
+    } else {
+      /* Apenas atualiza a prioridade */
+      t->priority = new_priority;
+    }
+    
+    intr_set_level (old_level);
+  }
 }
 
 /* Recalcula a prioridade de TODAS as threads (chamado a cada segundo). */
