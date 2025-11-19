@@ -4,10 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-#include <stdbool.h>
-#include "threads/synch.h"
-
-extern struct list all_list;
+#include "threads/fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -100,14 +97,14 @@ struct thread
     // Alarm Clock
     int64_t wakeup_tick;
 
+    /* --- INÍCIO: Adição para o MLFQ --- */
+    int nice;           /* Valor 'nice' (inteiro, -20 a 20) */
+    int recent_cpu;     /* CPU recente (em PONTO FIXO) */
+    /* --- FIM: Adição para o MLFQ --- */
+
 #ifdef USERPROG
-   uint32_t *pagedir;                  /* Page directory. */
-   struct thread *parent;              /* Thread pai */
-   struct list children;               /* Lista de threads filhas */
-   struct semaphore wait_sema;         /* Para sincronizar wait() */
-   struct semaphore load_sema;         /* Para sincronizar exec/load */
-   int exit_status;                    /* Código de saída do processo */
-   struct file *exec_file;             /* Arquivo executável aberto */
+    /* Owned by userprog/process.c. */
+    uint32_t *pagedir;                  /* Page directory. */
 #endif
 
     /* Owned by thread.c. */
@@ -123,6 +120,7 @@ void thread_init (void);
 void thread_start (void);
 
 void thread_tick (void);
+void thread_mlfqs_(int64_t tick);
 void thread_print_stats (void);
 
 typedef void thread_func (void *aux);
@@ -138,6 +136,7 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 bool thread_compare(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool thread_compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
 void thread_sleep (int64_t ticks);
 void thread_wakeup (int64_t current_tick);
 
@@ -152,5 +151,11 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+static void mlfqs_update_load_avg (void);
+static void mlfqs_update_one_recent_cpu (struct thread *t, void *aux UNUSED);
+static void mlfqs_update_all_recent_cpu (void);
+static void mlfqs_update_one_priority (struct thread *t, void *aux UNUSED);
+static void mlfqs_update_all_priority (void);
+int mlfqs_highest_priority(void);
 
 #endif /* threads/thread.h */
