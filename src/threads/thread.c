@@ -820,6 +820,7 @@ mlfqs_update_load_avg (void)
   int part1 = MULT_FP(f_59_60, load_avg);
   int part2 = MULT_INT(f_1_60, ready_threads);
   load_avg = ADD_FP(part1, part2);
+  load_avg = ADD_FP(part1, part2);
 }
 
 /* Aplica a fórmula de recent_cpu em UMA thread.
