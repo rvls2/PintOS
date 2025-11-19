@@ -137,6 +137,7 @@ void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 bool thread_compare(const struct list_elem *a, const struct list_elem *b, void *aux);
 bool thread_compare_priority(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool thread_compare_priority_after(const struct list_elem *a, const struct list_elem *b, void *aux);
 void thread_sleep (int64_t ticks);
 void thread_wakeup (int64_t current_tick);
 
@@ -156,6 +157,5 @@ static void mlfqs_update_one_recent_cpu (struct thread *t, void *aux UNUSED);
 static void mlfqs_update_all_recent_cpu (void);
 static void mlfqs_update_one_priority (struct thread *t, void *aux UNUSED);
 static void mlfqs_update_all_priority (void);
-int mlfqs_highest_priority(void);
 
 #endif /* threads/thread.h */
