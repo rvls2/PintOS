@@ -425,8 +425,8 @@ thread_sleep (int64_t ticks) {
 
   if (atual != idle_thread) {
     atual->wakeup_tick = ticks;
-    list_insert_ordered(&sleep_list, &atual->elem, thread_compare, NULL);
-    thread_block();
+    list_insert_ordered(&sleep_list, &atual->elem, thread_compare, NULL); // organizada pelo menor tempo de acordar
+    thread_block(); // bloqueia
   }
 
   intr_set_level(old_level);
@@ -434,9 +434,10 @@ thread_sleep (int64_t ticks) {
 
 // Em timer_interrupt
 void
-thread_wakeup (int64_t current_tick) { // chamada em timer_interrupt
+thread_wakeup (int64_t current_tick) {
   struct list_elem *e = list_begin(&sleep_list);
 
+  // acorda todas as threads que deveriam estar acordadas no tick atual
   while (e != list_end(&sleep_list)) {
     struct thread *t = list_entry (e, struct thread, elem);
 
@@ -444,7 +445,7 @@ thread_wakeup (int64_t current_tick) { // chamada em timer_interrupt
       e = list_remove(e);
       thread_unblock(t);
     }
-    else break;
+    else break; // a lista está organizada
   }
 }
 
@@ -476,6 +477,7 @@ thread_set_priority (int new_priority)
   struct thread *cur = thread_current ();
   cur->priority = new_priority;
 
+  // Verificar se prioridade de thread atual é menor que a maior prioridade da lista
   if(!list_empty(&ready_list)) {
     struct thread * e_front = list_entry(list_front(&ready_list), struct thread, elem); 
     if(e_front->priority > cur->priority) {
@@ -499,10 +501,10 @@ thread_set_nice (int nice UNUSED)
   struct thread *cur = thread_current ();
   cur->nice = nice;
   
-  /* Recalcula a prioridade imediatamente após mudar o 'nice' */
   if (thread_mlfqs) {
-    mlfqs_update_one_priority (cur, NULL); /* <-- Você vai criar esta função */
+    mlfqs_update_one_priority (cur, NULL); /* Recalcula a prioridade imediatamente após mudar o 'nice' */
 
+    // Verificar se prioridade de thread atual é menor que a maior prioridade da lista
     if (!list_empty(&ready_list)) {
       struct thread *e = list_entry(list_front(&ready_list), struct thread, elem);
       if (cur->priority < e->priority) {
