@@ -174,7 +174,7 @@ timer_interrupt (struct intr_frame *args UNUSED)
   ticks++;
   thread_tick ();
 
-  // Adicionado
+  // Se tiver threads prontas para acordar, acorda elas
   thread_wakeup(timer_ticks());
 
   // mlfqs
