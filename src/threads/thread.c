@@ -762,21 +762,17 @@ mlfqs_update_load_avg (void)
   load_avg = ADD_FP(part1, part2);
 }
 
-/* Aplica a fórmula de recent_cpu em UMA thread.
-   Esta é uma função auxiliar para thread_foreach. */
 static void
 mlfqs_update_one_recent_cpu (struct thread *t, void *aux UNUSED)
 {
-  /* 1. Calcular o coeficiente: (2 * load_avg) / (2 * load_avg + 1) */
+  // coeficiente: (2 * load_avg) / (2 * load_avg + 1)
 
   int f_2_load_avg = MULT_INT(load_avg, 2); /* (2 * load_avg) - Ponto Fixo */
   int f_2_load_avg_p1 = ADD_INT(f_2_load_avg, 1); /* (2 * load_avg + 1) - Ponto Fixo */
   
-  /* (Ponto Fixo / Ponto Fixo) */
   int coeff = DIV_FP(f_2_load_avg, f_2_load_avg_p1);
 
-  /* 2. Aplicar a fórmula:
-     recent_cpu = (coeff * recent_cpu) + nice */
+  // recent_cpu = (coeff * recent_cpu) + nice
   
   int term1 = MULT_FP(coeff, t->recent_cpu);   /* (coeff * recent_cpu) - Ponto Fixo */
   t->recent_cpu = ADD_INT(term1, t->nice); /* (term1 + nice) - Ponto Fixo + Inteiro */
