@@ -9,7 +9,7 @@
  * ponto fixo, enquanto 'n' é um inteiro padrão.
  */
 
-// 1. --- CONVERSÕES ---
+// CONVERSOES
 
 /* Converte o inteiro 'n' para ponto fixo */
 #define INT_TO_FP(n) ((n) * F)
@@ -23,7 +23,7 @@
 #define FP_TO_INT_NEAR(x) ((x) >= 0 ? ((x) + F / 2) / F : ((x) - F / 2) / F)
 
 
-// 2. --- ADIÇÃO E SUBTRAÇÃO ---
+// ADICAO E SUBTRACAO
 
 /* Adiciona dois números de ponto fixo (x + y) */
 #define ADD_FP(x, y) ((x) + (y))
@@ -38,21 +38,15 @@
 #define SUB_INT(x, n) ((x) - (n) * F)
 
 
-// 3. --- MULTIPLICAÇÃO E DIVISÃO (As partes críticas!) ---
+// MULTIPLICACAO E DIVISAO
 
 /* Multiplica dois números de ponto fixo (x * y)
- * IMPORTANTE: Usamos 'int64_t' para evitar overflow 
- * durante o cálculo intermediário (x * y), 
- * antes de dividir por F para normalizar. */
 #define MULT_FP(x, y) ( ((int64_t)(x)) * (y) / F )
 
 /* Multiplica um ponto fixo 'x' por um inteiro 'n' */
 #define MULT_INT(x, n) ((x) * (n))
 
 /* Divide dois números de ponto fixo (x / y)
- * IMPORTANTE: Usamos 'int64_t' para evitar overflow
- * durante o cálculo intermediário (x * F),
- * antes de dividir por y. */
 #define DIV_FP(x, y) ( ((int64_t)(x)) * F / (y) )
 
 /* Divide um ponto fixo 'x' por um inteiro 'n' */
